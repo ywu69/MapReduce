@@ -109,13 +109,14 @@ class Master(object):
                 current_size += len(line)
                 #print(current_size)
                 outputfile.write(line)
-                if index <= len(self.workers) and current_size >= subfile_size:
+                if index < len(self.workers) and current_size >= subfile_size:
                     current_size = 0
                     outputfile.close()
                     splited_files.append('sub_inputfile_' + str(index) + '.txt')
-                    if index < len(self.workers):
-                        index = index + 1
-                        outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
+                    index = index + 1
+                    outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
+            outputfile.close()
+            splited_files.append('sub_inputfile_' + str(index) + '.txt')
         return splited_files
 
     def do_job(self, nums):
