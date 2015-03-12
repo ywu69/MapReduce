@@ -20,8 +20,12 @@ class Master(object):
                 print '(%s,%s,%s)' % (w[0], w[1], self.workers[w][0]),
             print
             for w in self.workers:
-                self.workers[w][1].ping()
-
+                if self.workers[w][0] != "LOSS":
+                    try:
+                        self.workers[w][1].ping()
+                    except Exception:
+                        self.workers[w] = ("LOSS", self.workers[w][1])
+                        print 'lost connection'
             gevent.sleep(1)
 
     def register_async(self, ip, port):
