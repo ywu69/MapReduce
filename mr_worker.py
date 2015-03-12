@@ -4,6 +4,23 @@ import sys
 import socket
 import gevent
 
+import mapreduce
+
+class WordCountMap(mapreduce.Map):
+
+    def map(self, k, v):
+        words = v.split()
+        for w in words:
+            self.emit(w, '1')
+
+class WordCountReduce(mapreduce.Reduce):
+
+    def reduce(self, k, vlist):
+        count = 0
+        for v in vlist:
+            count = count + int(v)
+        self.emit(k + ':' + str(count))
+
 class Worker(object):
     def __init__(self, master_addr, worker_ip, worker_port):
         self.master_addr = master_addr
@@ -23,12 +40,25 @@ class Worker(object):
     def ping(self):
         print('[Worker] Ping from Master')
 
-    def do_map(self, job_name):
-        print 'Doing MAP '+ self.worker_ip + ':'+self.worker_port
+    def do_map(self, job_name, input_filename):
+        print 'Doing MAP '+ job_name+','+input_filename
+        #DO MAP TASK
+        job_name_map = job_name+'MAP'
+        mapper = WordCountMap()
+        # Map phase
+        with open(input_filename) as inputfile:
+            for line in inputfile:
+                mapper.map(0, line)
+
+        # Sort intermediate keys
+        table = mapper.get_table()
+        print table
         self.c.set_worker_state(self.worker_ip, self.worker_port, 'MAPDONE')
 
     def do_reduce(self, job_name, mapresults):
-        self.c.set_worker_state(self, self.worker_ip, self.worker_port, 'REDUCEDONE')
+        print 'Doing REDUCE '+ job_name
+        #DO_REDUCE Task
+        self.c.set_worker_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
 
     def do_work(self, nums):
         nums = [int(n) for n in nums]

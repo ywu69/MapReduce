@@ -47,16 +47,22 @@ class Master(object):
 
     def setJob_async(self,job_name, split_size, num_reducers, input_filename, output_filename_base):
         #split input file
-        splited_files = [];
+        splited_files = self.split_file(input_filename)
 
         #Align map tasks to workers
         print 'MAP phase'
         i = 0;
+        print splited_files
+        l = len(splited_files)
+        print l
         procs = []
-        for w in self.workers:
-            if self.workers[w][0] == 'READY':
-                print 'let him do map'
-                gevent.spawn(self.workers[w][1].do_map, job_name)#, splited_files[i])
+
+        while(i<l):
+            for w in self.workers:
+                if self.workers[w][0] == 'READY':
+                    print 'let him do map'
+                    gevent.spawn(self.workers[w][1].do_map, job_name, splited_files[i])
+                    i = i+1
 
         #Wait until all map tasks done
         print 'Wait until all map tasks done'
@@ -86,23 +92,27 @@ class Master(object):
 
         #collect
 
-    def split_file(self):
-        fileSize = os.path.getsize(data_dir)
+    def split_file(self,filename):
+        fileSize = os.path.getsize(filename)
         print(fileSize)
-        subfile_size = int(fileSize/5)
+        subfile_size = int(fileSize/len(self.workers))
         index = 1
-        with open(data_dir) as inputfile:
+        splited_files = []
+        with open(filename) as inputfile:
             current_size = 0
             outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
             for line in inputfile:
                 current_size += len(line)
-                print(current_size)
+                #print(current_size)
                 outputfile.write(line)
-                if index < 5 and current_size >= subfile_size:
+                if index <= len(self.workers) and current_size >= subfile_size:
                     current_size = 0
-                    index = index + 1
                     outputfile.close()
-                    outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
+                    splited_files.append('sub_inputfile_' + str(index) + '.txt')
+                    if index < len(self.workers):
+                        index = index + 1
+                        outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
+        return splited_files
 
     def do_job(self, nums):
         n = len(self.workers)
@@ -128,11 +138,11 @@ class Master(object):
         return sum([int(p.value) for p in procs])
 
 if __name__ == '__main__':
-    #port = 4242#sys.argv[1]
+    port = 4242#sys.argv[1]
     data_dir = "inputfile.txt"#sys.argv[2]
-    #master_addr = 'tcp://0.0.0.0:' + str(port)
-    #s = zerorpc.Server(Master(data_dir))
-    #s.bind(master_addr)
-    #s.run()
-    m = Master(data_dir)
-    m.split_file()
+    master_addr = 'tcp://0.0.0.0:' + str(port)
+    s = zerorpc.Server(Master(data_dir))
+    s.bind(master_addr)
+    s.run()
+    #m = Master(data_dir)
+    #m.split_file(data_dir)
