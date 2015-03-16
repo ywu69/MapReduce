@@ -40,20 +40,65 @@ class Worker(object):
     def ping(self):
         print('[Worker] Ping from Master')
 
-    def do_map(self, job_name, input_filename):
+    def do_map(self, job_name, input_filename, chunk):
         print 'Doing MAP '+ job_name+','+input_filename
+        size = chunk[0]
+        offset = chunk[1]
+
+        print 'size = '+ str(size)
+        print 'offset = ' + str(offset)
         #DO MAP TASK
         job_name_map = job_name+'MAP'
         mapper = WordCountMap()
         # Map phase
         with open(input_filename) as inputfile:
+            curr_off = -1
+            firstline_done = False
             for line in inputfile:
-                mapper.map(0, line)
+                curr_off += len(line)
+                if not firstline_done and curr_off >= offset:
+                    curr_off -= len(line)
+                    words = line.split(' ')
+                    newline = ''
+                    findoff = False
+                    print words
+                    for w in words:
+                        curr_off += len(w)
+                        if not w.endswith('\n'):
+                            curr_off += 1
+                        print curr_off
+                        if not findoff and curr_off >= offset:
+                            findoff = True
+                        if findoff and curr_off <= offset+size:
+                            newline += w
+                            if not w.endswith('\n'):
+                                newline += ' '
+                    print newline
+                    mapper.map(0, newline)
+                    firstline_done = True
+
+                elif firstline_done and curr_off < offset+size:
+                    mapper.map(0, line)
+                elif curr_off >= offset+size:
+                    curr_off -= len(line)
+                    words = line.split(' ')
+                    newline = ''
+                    for w in words:
+                        curr_off += len(w)
+                        if not curr_off >= offset+size:
+                            newline += w
+                            if not w.endswith('\n'):
+                                curr_off += 1
+                                newline += ' '
+                        if curr_off >= offset+size:
+                            break
+                    mapper.map(0, newline)
 
         # Sort intermediate keys
         table = mapper.get_table()
         print table
         self.c.set_worker_state(self.worker_ip, self.worker_port, 'MAPDONE')
+        #send to reducer
 
     def do_reduce(self, job_name, mapresults):
         print 'Doing REDUCE '+ job_name
@@ -73,4 +118,7 @@ if __name__ == '__main__':
     s.bind('tcp://' + worker_ip+":"+worker_port)
     s.run()
 
+    #w = Worker('A','B',1000)
+    #chunk = (11,36)
+    #w.do_map('a', 'inputfile2.txt', chunk)
     #print socket.gethostbyname(socket.gethostname())

@@ -12,6 +12,7 @@ class Master(object):
         self.state = 'READY'
         self.data_dir = data_dir
         self.workers = {}
+        self.chunkState = {}
 
     def controller(self):
         while True:
@@ -51,21 +52,20 @@ class Master(object):
 
     def setJob_async(self,job_name, split_size, num_reducers, input_filename, output_filename_base):
         #split input file
-        splited_files = self.split_file(input_filename)
-
+        chunks = self.split_file(input_filename, int(split_size))
         #Align map tasks to workers
         print 'MAP phase'
         i = 0;
-        print splited_files
-        l = len(splited_files)
-        print l
+        print chunks
+        l = len(chunks)
         procs = []
 
         while(i<l):
             for w in self.workers:
                 if self.workers[w][0] == 'READY':
                     print 'let him do map'
-                    gevent.spawn(self.workers[w][1].do_map, job_name, splited_files[i])
+                    self.chunkState[chunks[i]] = ('NOTFINISH',w)
+                    gevent.spawn(self.workers[w][1].do_map, job_name, input_filename, chunks[i])
                     i = i+1
 
         #Wait until all map tasks done
@@ -96,28 +96,40 @@ class Master(object):
 
         #collect
 
-    def split_file(self,filename):
+    def split_file(self, filename, split_size):
         fileSize = os.path.getsize(filename)
-        print(fileSize)
-        subfile_size = int(fileSize/len(self.workers))
-        index = 1
-        splited_files = []
+        #print(fileSize)
+        chunks = []
         with open(filename) as inputfile:
             current_size = 0
-            outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
+            offset = 0
+            #outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
             for line in inputfile:
+                #print line
                 current_size += len(line)
-                #print(current_size)
-                outputfile.write(line)
-                if index < len(self.workers) and current_size >= subfile_size:
-                    current_size = 0
-                    outputfile.close()
-                    splited_files.append('sub_inputfile_' + str(index) + '.txt')
-                    index = index + 1
-                    outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
-            outputfile.close()
-            splited_files.append('sub_inputfile_' + str(index) + '.txt')
-        return splited_files
+                offset += len(line)
+                if current_size >= split_size:
+                    current_size -= len(line)
+                    offset -= len(line)
+                    words = line.split(' ')
+                    #print words
+                    for w in words:
+                        current_size += len(w)
+                        offset += len(w)
+                        if not w.endswith('\n'):
+                            current_size += 1
+                            offset += 1
+                        print current_size
+                        if current_size >= split_size:
+                            done = True
+                            chunks.append((current_size, offset-current_size))
+                            current_size = 0
+
+
+            #the last chunk
+            if current_size > 0:
+                chunks.append((current_size, offset-current_size))
+        return chunks
 
     def do_job(self, nums):
         n = len(self.workers)
@@ -143,11 +155,11 @@ class Master(object):
         return sum([int(p.value) for p in procs])
 
 if __name__ == '__main__':
-    port = 4242#sys.argv[1]
-    data_dir = "inputfile.txt"#sys.argv[2]
-    master_addr = 'tcp://0.0.0.0:' + str(port)
-    s = zerorpc.Server(Master(data_dir))
-    s.bind(master_addr)
-    s.run()
-    #m = Master(data_dir)
-    #m.split_file(data_dir)
+    #port = 4242#sys.argv[1]
+    data_dir = "inputfile2.txt"#sys.argv[2]
+    #master_addr = 'tcp://0.0.0.0:' + str(port)
+    #s = zerorpc.Server(Master(data_dir))
+    #s.bind(master_addr)
+    #s.run()
+    m = Master(data_dir)
+    print m.split_file(data_dir, 18)
