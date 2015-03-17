@@ -29,6 +29,7 @@ class Worker(object):
         self.c = zerorpc.Client()
         self.c.connect("tcp://"+master_addr)
         self.c.register(worker_ip, worker_port)
+        self.map_table = {}
         gevent.spawn(self.controller)
         pass
 
@@ -44,7 +45,8 @@ class Worker(object):
         print 'Doing MAP '+ job_name+','+input_filename
         size = chunk[0]
         offset = chunk[1]
-
+        self.c.set_chunk_state(size, offset, 'CHUNK_MAPPING')
+        self.c.set_worker_state(self.worker_ip, self.worker_port, 'MAPPING')
         print 'size = '+ str(size)
         print 'offset = ' + str(offset)
         #DO MAP TASK
@@ -95,8 +97,9 @@ class Worker(object):
                     mapper.map(0, newline)
 
         # Sort intermediate keys
-        table = mapper.get_table()
-        print table
+        self.map_table = mapper.get_table()
+        print self.map_table
+
         self.c.set_worker_state(self.worker_ip, self.worker_port, 'MAPDONE')
         #send to reducer
 

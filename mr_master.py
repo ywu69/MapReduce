@@ -13,7 +13,7 @@ class Master(object):
         self.data_dir = data_dir
         self.workers = {}
         self.chunkState = {}
-
+        self.chunkWorker = {}
     def controller(self):
         while True:
             print '[Master:%s] ' % (self.state),
@@ -44,8 +44,15 @@ class Master(object):
         gevent.spawn(self.set_worker_state_async, ip, port, state)
 
     def set_worker_state_async(self, ip, port, state):
-        print 'set map state'
+        print 'set' +ip+':'+port+' map state ' + state
         self.workers[(ip,port)] = (state, self.workers[(ip,port)][1])
+
+
+    def set_chunk_state(self, size, offset, state):
+        gevent.spawn(self.set_chunk_state_async, size, offset, state)
+
+    def set_chunk_state_async(self, size, offset, state):
+        self.chunkState[(size, offset)] = state
 
     def set_job(self,job_name, split_size, num_reducers, input_filename, output_filename_base):
         gevent.spawn(self.setJob_async, job_name, split_size, num_reducers, input_filename, output_filename_base)
@@ -55,18 +62,43 @@ class Master(object):
         chunks = self.split_file(input_filename, int(split_size))
         #Align map tasks to workers
         print 'MAP phase'
-        i = 0;
         print chunks
         l = len(chunks)
         procs = []
 
-        while(i<l):
-            for w in self.workers:
-                if self.workers[w][0] == 'READY':
-                    print 'let him do map'
-                    self.chunkState[chunks[i]] = ('NOTFINISH',w)
-                    gevent.spawn(self.workers[w][1].do_map, job_name, input_filename, chunks[i])
-                    i = i+1
+        for x in range(0,l):
+            self.chunkState[chunks[x]] = 'CHUNK_NOTFINISH'
+        while True:
+            alldone = True
+            for i in range(0,l):
+                if self.chunkState[chunks[i]] != 'CHUNK_FINISH':
+                    alldone = False
+                    if self.chunkState[chunks[i]] != 'CHUNK_MAPPING':
+                        w = self.select_a_Worker()
+                        print w
+                        if w != None:
+                            self.chunkWorker[chunks[i]] = w
+                            self.workers[w] = ('MAPSTART', self.workers[w][1])
+                            gevent.spawn(self.workers[w][1].do_map, job_name, input_filename, chunks[i])
+
+            for i in range(0,l):
+                w = self.chunkWorker[chunks[i]]
+                if self.workers[w][0] == 'LOSS':
+                    self.chunkState[chunks[i]] = 'CHUNK_FAIL'
+                elif self.workers[w][0] == 'MAPDONE':
+                    self.chunkState[chunks[i]] = 'CHUNK_FINISH'
+            print self.chunkState
+            gevent.sleep(1)
+            if alldone:
+                break
+
+        #while(i<l):
+        #    for w in self.workers:
+        #        if self.workers[w][0] == 'READY':
+        #            print 'let him do map'
+        #            #self.chunkState[chunks[i]] = ('NOTFINISH',w)
+        #            gevent.spawn(self.workers[w][1].do_map, job_name, input_filename, chunks[i])
+        #            i = i+1
 
         #Wait until all map tasks done
         print 'Wait until all map tasks done'
@@ -95,6 +127,14 @@ class Master(object):
         #        break
 
         #collect
+
+    def select_a_Worker(self):
+        selected_worker = None
+        for w in self.workers:
+            if self.workers[w][0] == 'READY':
+                selected_worker = w
+                break
+        return selected_worker
 
     def split_file(self, filename, split_size):
         fileSize = os.path.getsize(filename)
@@ -155,11 +195,11 @@ class Master(object):
         return sum([int(p.value) for p in procs])
 
 if __name__ == '__main__':
-    #port = 4242#sys.argv[1]
+    port = 4242#sys.argv[1]
     data_dir = "inputfile2.txt"#sys.argv[2]
-    #master_addr = 'tcp://0.0.0.0:' + str(port)
-    #s = zerorpc.Server(Master(data_dir))
-    #s.bind(master_addr)
-    #s.run()
-    m = Master(data_dir)
-    print m.split_file(data_dir, 18)
+    master_addr = 'tcp://0.0.0.0:' + str(port)
+    s = zerorpc.Server(Master(data_dir))
+    s.bind(master_addr)
+    s.run()
+    #m = Master(data_dir)
+    #print m.split_file(data_dir, 18)
