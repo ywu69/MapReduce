@@ -42,11 +42,14 @@ class Worker(object):
         print('[Worker] Ping from Master')
 
     def do_map(self, job_name, input_filename, chunk):
+        gevent.spawn(self.do_map_async, job_name, input_filename, chunk)
+
+    def do_map_async(self, job_name, input_filename, chunk):
         print 'Doing MAP '+ job_name+','+input_filename
         size = chunk[0]
         offset = chunk[1]
         self.c.set_chunk_state(size, offset, 'CHUNK_MAPPING')
-        self.c.set_worker_state(self.worker_ip, self.worker_port, 'MAPPING')
+        self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPPING')
         print 'size = '+ str(size)
         print 'offset = ' + str(offset)
         #DO MAP TASK
@@ -100,12 +103,19 @@ class Worker(object):
         self.map_table = mapper.get_table()
         print self.map_table
 
-        self.c.set_worker_state(self.worker_ip, self.worker_port, 'MAPDONE')
+        self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPDONE')
         #send to reducer
 
-    def do_reduce(self, job_name, mapresults):
+    def do_reduce(self, job_name):
+        gevent.spawn(self.do_reduce_async, job_name)
+
+    def do_reduce_async(self, job_name):
+        #wait until all map data collected
+
         print 'Doing REDUCE '+ job_name
         #DO_REDUCE Task
+
+        #generate output files
         self.c.set_worker_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
 
     def do_work(self, nums):

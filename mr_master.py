@@ -12,20 +12,25 @@ class Master(object):
         self.state = 'READY'
         self.data_dir = data_dir
         self.workers = {}
+        self.mapState = {}
+        self.reduceState = {}
+
         self.chunkState = {}
         self.chunkWorker = {}
+
     def controller(self):
         while True:
             print '[Master:%s] ' % (self.state),
             for w in self.workers:
-                print '(%s,%s,%s)' % (w[0], w[1], self.workers[w][0]),
+                print '(%s,%s,%s)' % (w[0], w[1], self.mapState[w]),
             print
             for w in self.workers:
-                if self.workers[w][0] != "LOSS":
+                if self.mapState[w] != "LOSS":
                     try:
-                        self.workers[w][1].ping()
+                        self.workers[w].ping()
                     except Exception:
-                        self.workers[w] = ("LOSS", self.workers[w][1])
+                        self.mapState[w] = "LOSS"
+                        self.reduceState[w] = "LOSS"
                         print 'lost connection'
             gevent.sleep(1)
 
@@ -34,18 +39,20 @@ class Master(object):
         print 'Registered worker (%s,%s)' % (ip, port)
         c = zerorpc.Client()
         c.connect("tcp://" + ip + ':' + port)
-        self.workers[(ip,port)] = ('READY', c)
+        self.workers[(ip,port)] = c
+        self.mapState[(ip,port)] = 'READY'
+        self.reduceState[(ip,port)] = 'READY'
         c.ping()
 
     def register(self, ip, port):
         gevent.spawn(self.register_async, ip, port)
 
-    def set_worker_state(self, ip, port, state):
-        gevent.spawn(self.set_worker_state_async, ip, port, state)
+    def set_worker_map_state(self, ip, port, state):
+        gevent.spawn(self.set_worker_map_state_async, ip, port, state)
 
-    def set_worker_state_async(self, ip, port, state):
+    def set_worker_map_state_async(self, ip, port, state):
         print 'set' +ip+':'+port+' map state ' + state
-        self.workers[(ip,port)] = (state, self.workers[(ip,port)][1])
+        self.mapState[(ip,port)] = state
 
 
     def set_chunk_state(self, size, offset, state):
@@ -78,14 +85,14 @@ class Master(object):
                         print w
                         if w != None:
                             self.chunkWorker[chunks[i]] = w
-                            self.workers[w] = ('MAPSTART', self.workers[w][1])
-                            gevent.spawn(self.workers[w][1].do_map, job_name, input_filename, chunks[i])
+                            self.mapState[w] = 'MAPSTART'
+                            gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i])
 
             for i in range(0,l):
                 w = self.chunkWorker[chunks[i]]
-                if self.workers[w][0] == 'LOSS':
+                if self.mapState[w] == 'LOSS':
                     self.chunkState[chunks[i]] = 'CHUNK_FAIL'
-                elif self.workers[w][0] == 'MAPDONE':
+                elif self.mapState[w] == 'MAPDONE':
                     self.chunkState[chunks[i]] = 'CHUNK_FINISH'
             print self.chunkState
             gevent.sleep(1)
@@ -131,7 +138,7 @@ class Master(object):
     def select_a_Worker(self):
         selected_worker = None
         for w in self.workers:
-            if self.workers[w][0] == 'READY':
+            if self.mapState[w] == 'READY':
                 selected_worker = w
                 break
         return selected_worker
@@ -171,28 +178,6 @@ class Master(object):
                 chunks.append((current_size, offset-current_size))
         return chunks
 
-    def do_job(self, nums):
-        n = len(self.workers)
-        chunk = len(nums) / n
-        i = 0
-        offset = 0
-        #result = 0
-        procs = []
-        for w in self.workers:
-            if i == (n - 1):
-                sub = nums[offset:]
-            else:
-                sub = nums[offset:offset+chunk]
-
-            proc = gevent.spawn(self.workers[w][1].do_work, sub)
-            procs.append(proc)
-
-            #result += int(self.workers[w][1].do_work(sub))
-            i = i + 1
-            offset = offset + chunk
-
-        gevent.joinall(procs)
-        return sum([int(p.value) for p in procs])
 
 if __name__ == '__main__':
     port = 4242#sys.argv[1]
