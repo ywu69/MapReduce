@@ -4,6 +4,7 @@ import sys
 import zerorpc
 import os
 import gevent
+from gevent import timeout
 
 class Master(object):
 
@@ -17,6 +18,7 @@ class Master(object):
 
         self.chunkState = {}
         self.chunkWorker = {}
+        self.ready_chunks_mappers = {}
 
     def controller(self):
         while True:
@@ -54,6 +56,12 @@ class Master(object):
         print 'set' +ip+':'+port+' map state ' + state
         self.mapState[(ip,port)] = state
 
+    def set_worker_reduce_state(self, ip, port, state):
+        gevent.spawn(self.set_worker_reduce_state_async, ip, port, state)
+
+    def set_worker_reduce_state_async(self, ip, port, state):
+        print 'set' +ip+':'+port+' reduce state ' + state
+        self.reduceState[(ip,port)] = state
 
     def set_chunk_state(self, size, offset, state):
         gevent.spawn(self.set_chunk_state_async, size, offset, state)
@@ -73,28 +81,57 @@ class Master(object):
         l = len(chunks)
         procs = []
 
+        curr_num_reducers = 0
+
         for x in range(0,l):
             self.chunkState[chunks[x]] = 'CHUNK_NOTFINISH'
         while True:
             alldone = True
+            #start mappers
             for i in range(0,l):
-                if self.chunkState[chunks[i]] != 'CHUNK_FINISH':
-                    alldone = False
-                    if self.chunkState[chunks[i]] != 'CHUNK_MAPPING':
-                        w = self.select_a_Worker()
-                        print w
-                        if w != None:
-                            self.chunkWorker[chunks[i]] = w
-                            self.mapState[w] = 'MAPSTART'
-                            gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i])
+                if self.chunkState[chunks[i]] != 'CHUNK_FINISH' and self.chunkState[chunks[i]] != 'CHUNK_MAPPING':
+                    w = self.select_a_mapper()
+                    if w != None:
+                        self.chunkWorker[chunks[i]] = w
+                        self.mapState[w] = 'MAPSTART'
+                        gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i], int(num_reducers))
+
+            #start reducers when map done
+            temp = int(num_reducers) - curr_num_reducers
+            for i in range(0,temp):
+                w = self.select_a_reducer()
+                if w != None:
+                    self.reduceState[w] = 'REDUCESTART'
+                    curr_num_reducers += 1
+                    gevent.spawn(self.workers[w].do_reduce, job_name, i+1, l)
+
+            #judge if task is over
+            num_finished_reducer = 0
+            for w in self.reduceState:
+                if self.reduceState[w] == 'REDUCEDONE':
+                    num_finished_reducer += 1
+            alldone = (num_finished_reducer >= num_reducers)
 
             for i in range(0,l):
                 w = self.chunkWorker[chunks[i]]
                 if self.mapState[w] == 'LOSS':
                     self.chunkState[chunks[i]] = 'CHUNK_FAIL'
+                elif self.mapState[w] == 'MAPRESULTCOLLECT':
+                    self.ready_chunks_mappers[chunks[i]] = w
                 elif self.mapState[w] == 'MAPDONE':
                     self.chunkState[chunks[i]] = 'CHUNK_FINISH'
-            print self.chunkState
+                    self.mapState[w] = 'READY'
+
+                if self.reduceState[w] == 'LOSS':
+                    curr_num_reducers -= 1
+                elif self.reduceState[w] == 'REDUCESTART':
+                    #send map list to reducer
+                    print 'send mapperlist to reducer'
+                    gevent.spawn(self.send_mapper_list, w)
+
+
+            #print self.chunkState
+            print self.reduceState
             gevent.sleep(1)
             if alldone:
                 break
@@ -108,7 +145,7 @@ class Master(object):
         #            i = i+1
 
         #Wait until all map tasks done
-        print 'Wait until all map tasks done'
+        print 'tasks done'
         #while True:
         #    mapDone = True
         #    for w in self.workers:
@@ -134,11 +171,35 @@ class Master(object):
         #        break
 
         #collect
+    def send_mapper_list(self, w):
+        try:
+            print self.ready_chunks_mappers
+            list = []
+            for e in self.ready_chunks_mappers:
+                list.append((e, self.ready_chunks_mappers[e]))
+            self.workers[w].set_mapper_list(list)
+        except Exception:
+            print 'Time out'
 
-    def select_a_Worker(self):
+    def get_valid_mappers(self):
+        list = []
+        for w in self.mapState:
+            if self.mapState[w] != 'LOSS':
+                list.append(w)
+        return list
+
+    def select_a_reducer(self):
         selected_worker = None
         for w in self.workers:
-            if self.mapState[w] == 'READY':
+            if self.reduceState[w] == 'READY':
+                selected_worker = w
+                break
+        return selected_worker
+
+    def select_a_mapper(self):
+        selected_worker = None
+        for w in self.workers:
+            if self.mapState[w] == 'READY':# or self.mapState[w] == 'MAPDONE':
                 selected_worker = w
                 break
         return selected_worker

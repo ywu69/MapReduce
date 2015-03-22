@@ -29,9 +29,17 @@ class Worker(object):
         self.c = zerorpc.Client()
         self.c.connect("tcp://"+master_addr)
         self.c.register(worker_ip, worker_port)
+
+        #Attributes of mapper
         self.map_table = {}
+        self.num_reducer_received = 0
         gevent.spawn(self.controller)
-        pass
+
+        #Attributes of reducer
+        self.mappers_list = {}
+        self.map_result = {}
+        self.map_result_collect_state = {}
+        self.reduce_id = 0
 
     def controller(self):
         while True:
@@ -41,10 +49,16 @@ class Worker(object):
     def ping(self):
         print('[Worker] Ping from Master')
 
-    def do_map(self, job_name, input_filename, chunk):
-        gevent.spawn(self.do_map_async, job_name, input_filename, chunk)
 
-    def do_map_async(self, job_name, input_filename, chunk):
+    def notice_received(self):
+        gevent.spawn(self.notice_received_async)
+    def notice_received_async(self):
+        self.num_reducer_received += 1
+
+    def do_map(self, job_name, input_filename, chunk, num_reducers):
+        gevent.spawn(self.do_map_async, job_name, input_filename, chunk, num_reducers)
+
+    def do_map_async(self, job_name, input_filename, chunk, num_reducers):
         print 'Doing MAP '+ job_name+','+input_filename
         size = chunk[0]
         offset = chunk[1]
@@ -66,19 +80,19 @@ class Worker(object):
                     words = line.split(' ')
                     newline = ''
                     findoff = False
-                    print words
+                    #print words
                     for w in words:
                         curr_off += len(w)
                         if not w.endswith('\n'):
                             curr_off += 1
-                        print curr_off
+                        #print curr_off
                         if not findoff and curr_off >= offset:
                             findoff = True
                         if findoff and curr_off <= offset+size:
                             newline += w
                             if not w.endswith('\n'):
                                 newline += ' '
-                    print newline
+                    #print newline
                     mapper.map(0, newline)
                     firstline_done = True
 
@@ -103,25 +117,52 @@ class Worker(object):
         self.map_table = mapper.get_table()
         print self.map_table
 
+        self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPRESULTCOLLECT')
+        while self.num_reducer_received < num_reducers:
+            gevent.sleep(1)
+            continue
+
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPDONE')
         #send to reducer
 
-    def do_reduce(self, job_name):
-        gevent.spawn(self.do_reduce_async, job_name)
+    def do_reduce(self, job_name, reduce_id, num_chunk):
+        gevent.spawn(self.do_reduce_async, job_name, reduce_id, num_chunk)
 
-    def do_reduce_async(self, job_name):
+    def do_reduce_async(self, job_name, reduce_id, num_chunk):
         #wait until all map data collected
+        print 'Doing REDUCE '+ job_name+' reduce id = '+str(reduce_id)
+        self.reduce_id = reduce_id
+        reducer = WordCountReduce()
+        #alldone = False
+        #while not alldone:
+        #    for w in self.mappers_list:####################
+        #        gevent.spawn(self.reduce_single_map_result, reducer, key_from, key_to, w)
+        #print reducer.get_result_list()
+        #self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
 
-        print 'Doing REDUCE '+ job_name
-        #DO_REDUCE Task
+    def reduce_single_map_result(self,reducer, key_from, key_to, w):
+        c = zerorpc.Client()
+        c.connect("tcp://"+w[0]+':'+w[1])
+        table = c.get_map_table_part(key_from, key_to)
+        c.notice_received()
+        keys = table.keys()
+        for k in keys:
+            reducer.reduce(k, table[k])
 
-        #generate output files
-        self.c.set_worker_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
+    def set_mapper_list(self, mappers_list):
+        gevent.spawn(self.set_mapper_list_async, mappers_list)
 
-    def do_work(self, nums):
-        nums = [int(n) for n in nums]
-        gevent.sleep(2)
-        return str(sum(nums))
+    def set_mapper_list_async(self,mappers_list):
+        #self.mappers_list = mappers_list
+        print mappers_list
+
+    def get_map_table_part(self, key_from, key_to):
+        table = {}
+        keys = self.map_table.keys()
+        for k in keys:
+            if k>= key_from and k<= key_to:
+                table[k] = self.map_table[k]
+        return table
 
 if __name__ == '__main__':
     master_addr = "127.0.0.1:4242"#sys.argv[1];
