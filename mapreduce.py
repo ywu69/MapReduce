@@ -21,13 +21,14 @@ class Map(object):
 class Reduce(object):
 
     def __init__(self):
-        self.result_list = []
+        self.result_list = {}
 
     def reduce(self, k, vlist):
-       pass
+        pass
 
     def emit(self, v):
-        self.result_list.append(v)
+        pass
+        #self.result_list.append(v)
 
     def get_result_list(self):
         return self.result_list

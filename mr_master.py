@@ -15,6 +15,7 @@ class Master(object):
         self.workers = {}
         self.mapState = {}
         self.reduceState = {}
+        self.reduce_id_list = {}
 
         self.chunkState = {}
         self.chunkWorker = {}
@@ -69,6 +70,17 @@ class Master(object):
     def set_chunk_state_async(self, size, offset, state):
         self.chunkState[(size, offset)] = state
 
+    def write_reduce_result_list_to_file(self, w, input_filename, output_filename_base, reducer_id):
+        try:
+            temp_result_list = self.workers[w].get_result_list()
+            f = open(output_filename_base + str(reducer_id)+'.txt', 'w')
+            for e in temp_result_list:
+                f.write(str(e[0])+':'+str(e[1])+'\n')
+            f.close()
+            self.workers[w].master_notice_received()
+        except Exception:
+            print 'Time out???'
+
     def set_job(self,job_name, split_size, num_reducers, input_filename, output_filename_base):
         gevent.spawn(self.setJob_async, job_name, split_size, num_reducers, input_filename, output_filename_base)
 
@@ -81,7 +93,8 @@ class Master(object):
         l = len(chunks)
         procs = []
 
-        curr_num_reducers = 0
+        for i in range(0,int(num_reducers)):
+            self.reduce_id_list[i+1] = None
 
         for x in range(0,l):
             self.chunkState[chunks[x]] = 'CHUNK_NOTFINISH'
@@ -97,13 +110,15 @@ class Master(object):
                         gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i], int(num_reducers))
 
             #start reducers when map done
-            temp = int(num_reducers) - curr_num_reducers
-            for i in range(0,temp):
-                w = self.select_a_reducer()
-                if w != None:
-                    self.reduceState[w] = 'REDUCESTART'
-                    curr_num_reducers += 1
-                    gevent.spawn(self.workers[w].do_reduce, job_name, i+1, l)
+            #temp = int(num_reducers) - curr_num_reducers
+            for i in range(0,int(num_reducers)):
+                reduce_id = i+1
+                if self.reduce_id_list[reduce_id] is None:
+                    w = self.select_a_reducer()
+                    self.reduce_id_list[reduce_id] = w
+                    if w != None:
+                        self.reduceState[w] = 'REDUCESTART'
+                        gevent.spawn(self.workers[w].do_reduce, job_name, reduce_id, l)
 
             #judge if task is over
             num_finished_reducer = 0
@@ -120,17 +135,26 @@ class Master(object):
                     self.ready_chunks_mappers[chunks[i]] = w
                 elif self.mapState[w] == 'MAPDONE':
                     self.chunkState[chunks[i]] = 'CHUNK_FINISH'
+                    self.ready_chunks_mappers.pop(chunks[i])
                     self.mapState[w] = 'READY'
 
                 if self.reduceState[w] == 'LOSS':
-                    curr_num_reducers -= 1
+                    for e in self.reduce_id_list:
+                        if self.reduce_id_list[e] == w:
+                            self.reduce_id_list[e] = None
                 elif self.reduceState[w] == 'REDUCESTART':
                     #send map list to reducer
                     print 'send mapperlist to reducer'
                     gevent.spawn(self.send_mapper_list, w)
+                elif self.reduceState[w] == 'REDUCERESULTCOLLECT':
+                    for id in self.reduce_id_list:
+                        if self.reduce_id_list[id] == w:
+                            gevent.spawn(self.write_reduce_result_list_to_file, w, input_filename, output_filename_base, id)
+
 
 
             #print self.chunkState
+            print self.reduce_id_list
             print self.reduceState
             gevent.sleep(1)
             if alldone:

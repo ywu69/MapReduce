@@ -16,10 +16,16 @@ class WordCountMap(mapreduce.Map):
 class WordCountReduce(mapreduce.Reduce):
 
     def reduce(self, k, vlist):
+        #print self.result_list
         count = 0
         for v in vlist:
             count = count + int(v)
-        self.emit(k + ':' + str(count))
+        val = 0
+        if self.result_list.has_key(k):
+            val = self.result_list[k]
+        val += count
+        self.result_list[k] = val
+        #self.emit(k + ':' + str(count))
 
 class Worker(object):
     def __init__(self, master_addr, worker_ip, worker_port):
@@ -33,6 +39,7 @@ class Worker(object):
         #Attributes of mapper
         self.map_table = {}
         self.num_reducer_received = 0
+        self.num_reducers = 0
         gevent.spawn(self.controller)
 
         #Attributes of reducer
@@ -40,6 +47,8 @@ class Worker(object):
         self.map_result = {}
         self.map_result_collect_state = {}
         self.reduce_id = 0
+        self.result_list = {}
+        self.result_sent_to_master = False
 
     def controller(self):
         while True:
@@ -115,7 +124,10 @@ class Worker(object):
 
         # Sort intermediate keys
         self.map_table = mapper.get_table()
-        print self.map_table
+        self.map_table.keys().sort()
+        self.num_reducers = num_reducers
+        #print self.map_table
+
 
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPRESULTCOLLECT')
         while self.num_reducer_received < num_reducers:
@@ -133,36 +145,88 @@ class Worker(object):
         print 'Doing REDUCE '+ job_name+' reduce id = '+str(reduce_id)
         self.reduce_id = reduce_id
         reducer = WordCountReduce()
+
+        while len(self.map_result_collect_state) < num_chunk:
+            for e in self.mappers_list:
+                gevent.spawn(self.reduce_single_map_result, reducer, e, reduce_id)
+            gevent.sleep(1)
+        self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCERESULTCOLLECT')
         #alldone = False
+
+        self.result_list = reducer.get_result_list()
+        while not self.result_sent_to_master:
+            gevent.sleep(1)
+            continue
         #while not alldone:
         #    for w in self.mappers_list:####################
         #        gevent.spawn(self.reduce_single_map_result, reducer, key_from, key_to, w)
-        #print reducer.get_result_list()
-        #self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
+        self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
 
-    def reduce_single_map_result(self,reducer, key_from, key_to, w):
+    def master_notice_received(self):
+        gevent.spawn(self.master_notice_received_async)
+
+    def master_notice_received_async(self):
+        self.result_sent_to_master = True
+
+    def reduce_single_map_result(self,reducer, chunk, reduce_id):
+        w = self.mappers_list[chunk]
         c = zerorpc.Client()
         c.connect("tcp://"+w[0]+':'+w[1])
-        table = c.get_map_table_part(key_from, key_to)
+        table = c.get_map_table_part(reduce_id)
         c.notice_received()
-        keys = table.keys()
-        for k in keys:
-            reducer.reduce(k, table[k])
+        #print table
+        self.map_result_collect_state[chunk] = 'COLLECTED'
+        for e in table:
+            reducer.reduce(e[0], e[1])
+        #keys = table.keys()
+        #for k in keys:
+        #    reducer.reduce(k, table[k])
+
+
+    def encode_a_map_to_list(self, map):
+        pass
+
+    def decode_a_list_to_map(self, list):
+        pass
 
     def set_mapper_list(self, mappers_list):
         gevent.spawn(self.set_mapper_list_async, mappers_list)
 
     def set_mapper_list_async(self,mappers_list):
-        #self.mappers_list = mappers_list
-        print mappers_list
+        for e in mappers_list:
+            key = (e[0][0], e[0][1])
+            val = (e[1][0], e[1][1])
+            self.mappers_list[key] = val
+        #print self.mappers_list
 
-    def get_map_table_part(self, key_from, key_to):
-        table = {}
+    def get_map_table_part(self, reduce_id):
+        table = []
         keys = self.map_table.keys()
-        for k in keys:
-            if k>= key_from and k<= key_to:
-                table[k] = self.map_table[k]
+        #print keys
+        each_size = len(keys)/self.num_reducers
+        #print 'eachsize = ' + str(each_size)
+        begin = (reduce_id-1)*each_size
+
+        if reduce_id == self.num_reducers:
+            end = len(keys)
+        else:
+            end = reduce_id*each_size
+
+        tp = 0
+        print begin, end
+        for e in self.map_table:
+            if tp>=begin and tp < end:
+                table.append((e,self.map_table[e]))
+            tp += 1
+        print table
         return table
+
+
+    def get_result_list(self):
+        list = []
+        for e in self.result_list:
+            list.append((e,self.result_list[e]))
+        return list
 
 if __name__ == '__main__':
     master_addr = "127.0.0.1:4242"#sys.argv[1];
