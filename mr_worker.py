@@ -11,7 +11,11 @@ class WordCountMap(mapreduce.Map):
     def map(self, k, v):
         words = v.split()
         for w in words:
-            self.emit(w, '1')
+            if w in self.table:
+                self.table[w] = [str(int(self.table[w][0]) + 1)]
+            else:
+                self.table[w] = ['1']
+            #self.emit(w, '1')
 
 class WordCountReduce(mapreduce.Reduce):
 
