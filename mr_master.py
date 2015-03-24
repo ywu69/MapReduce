@@ -86,6 +86,8 @@ class Master(object):
 
     def setJob_async(self,job_name, split_size, num_reducers, input_filename, output_filename_base):
         #split input file
+        if not os.path.exists(os.getcwd()+'/' + output_filename_base):
+            os.makedirs(os.getcwd()+'/' + output_filename_base,0777)
         chunks = self.split_file(input_filename, int(split_size))
         #Align map tasks to workers
         print 'MAP phase'
@@ -131,11 +133,14 @@ class Master(object):
                 w = self.chunkWorker[chunks[i]]
                 if self.mapState[w] == 'LOSS':
                     self.chunkState[chunks[i]] = 'CHUNK_FAIL'
+                    if self.ready_chunks_mappers.has_key(chunks[i]):
+                        self.ready_chunks_mappers.pop(chunks[i])
                 elif self.mapState[w] == 'MAPRESULTCOLLECT':
                     self.ready_chunks_mappers[chunks[i]] = w
                 elif self.mapState[w] == 'MAPDONE':
                     self.chunkState[chunks[i]] = 'CHUNK_FINISH'
-                    self.ready_chunks_mappers.pop(chunks[i])
+                    if self.ready_chunks_mappers.has_key(chunks[i]):
+                        self.ready_chunks_mappers.pop(chunks[i])
                     self.mapState[w] = 'READY'
 
                 if self.reduceState[w] == 'LOSS':
@@ -154,7 +159,9 @@ class Master(object):
 
 
             #print self.chunkState
-            print self.reduce_id_list
+            print 'ready_chunk_mappers:'
+            print self.ready_chunks_mappers
+            print 'reduceState:'
             print self.reduceState
             gevent.sleep(1)
             if alldone:

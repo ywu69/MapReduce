@@ -38,8 +38,8 @@ class Worker(object):
 
         #Attributes of mapper
         self.map_table = {}
-        self.num_reducer_received = 0
         self.num_reducers = 0
+        self.reduce_state = []
         gevent.spawn(self.controller)
 
         #Attributes of reducer
@@ -52,23 +52,32 @@ class Worker(object):
 
     def controller(self):
         while True:
-            print('[Worker]')
+            #print('[Worker]')
             gevent.sleep(1)
 
     def ping(self):
-        print('[Worker] Ping from Master')
+        pass
+        #print('[Worker] Ping from Master')
 
 
-    def notice_received(self):
-        gevent.spawn(self.notice_received_async)
-    def notice_received_async(self):
-        self.num_reducer_received += 1
+    def notice_received(self, reduce_id):
+        gevent.spawn(self.notice_received_async, reduce_id)
+    def notice_received_async(self,reduce_id):
+        #print self.reduce_state
+        #print reduce_id
+        self.reduce_state[reduce_id-1] = True
 
     def do_map(self, job_name, input_filename, chunk, num_reducers):
         gevent.spawn(self.do_map_async, job_name, input_filename, chunk, num_reducers)
 
     def do_map_async(self, job_name, input_filename, chunk, num_reducers):
         print 'Doing MAP '+ job_name+','+input_filename
+        #self.map_table = {}
+        self.reduce_state = []
+
+        for i in range(0,num_reducers):
+            self.reduce_state.append(False)
+
         size = chunk[0]
         offset = chunk[1]
         self.c.set_chunk_state(size, offset, 'CHUNK_MAPPING')
@@ -124,13 +133,18 @@ class Worker(object):
 
         # Sort intermediate keys
         self.map_table = mapper.get_table()
-        self.map_table.keys().sort()
+        #self.map_table.keys().sort()
         self.num_reducers = num_reducers
         #print self.map_table
 
 
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPRESULTCOLLECT')
-        while self.num_reducer_received < num_reducers:
+        alldone = False
+        while not alldone:
+            alldone = True
+            for i in self.reduce_state:
+                if i == False:
+                    alldone = False
             gevent.sleep(1)
             continue
 
@@ -146,20 +160,23 @@ class Worker(object):
         self.reduce_id = reduce_id
         reducer = WordCountReduce()
 
+        print 'PRESS CTRL+C'
+        gevent.sleep(3)
+        print 'get map datas'
         while len(self.map_result_collect_state) < num_chunk:
+            print len(self.map_result_collect_state), num_chunk
             for e in self.mappers_list:
-                gevent.spawn(self.reduce_single_map_result, reducer, e, reduce_id)
+                if not self.map_result_collect_state.has_key(e):
+                    gevent.spawn(self.reduce_single_map_result, reducer, e, reduce_id)
             gevent.sleep(1)
         self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCERESULTCOLLECT')
         #alldone = False
-
+        print 'Wait master to get'
         self.result_list = reducer.get_result_list()
         while not self.result_sent_to_master:
             gevent.sleep(1)
             continue
-        #while not alldone:
-        #    for w in self.mappers_list:####################
-        #        gevent.spawn(self.reduce_single_map_result, reducer, key_from, key_to, w)
+        print 'Done'
         self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
 
     def master_notice_received(self):
@@ -169,25 +186,21 @@ class Worker(object):
         self.result_sent_to_master = True
 
     def reduce_single_map_result(self,reducer, chunk, reduce_id):
-        w = self.mappers_list[chunk]
-        c = zerorpc.Client()
-        c.connect("tcp://"+w[0]+':'+w[1])
-        table = c.get_map_table_part(reduce_id)
-        c.notice_received()
+        try:
+            w = self.mappers_list[chunk]
+            c = zerorpc.Client()
+            c.connect("tcp://"+w[0]+':'+w[1])
+            table = c.get_map_table_part(reduce_id)
+            c.notice_received(reduce_id)
         #print table
-        self.map_result_collect_state[chunk] = 'COLLECTED'
-        for e in table:
-            reducer.reduce(e[0], e[1])
+            self.map_result_collect_state[chunk] = 'COLLECTED'
+            for e in table:
+                reducer.reduce(e[0], e[1])
+        except Exception:
+            print 'Time out, wait until mapperlist update'
         #keys = table.keys()
         #for k in keys:
         #    reducer.reduce(k, table[k])
-
-
-    def encode_a_map_to_list(self, map):
-        pass
-
-    def decode_a_list_to_map(self, list):
-        pass
 
     def set_mapper_list(self, mappers_list):
         gevent.spawn(self.set_mapper_list_async, mappers_list)
@@ -218,7 +231,7 @@ class Worker(object):
             if tp>=begin and tp < end:
                 table.append((e,self.map_table[e]))
             tp += 1
-        print table
+        #print table
         return table
 
 
