@@ -12,6 +12,7 @@ class Master(object):
         gevent.spawn(self.controller)
         self.state = 'READY'
         self.data_dir = data_dir
+
         self.workers = {}
         self.mapState = {}
         self.reduceState = {}
@@ -73,7 +74,7 @@ class Master(object):
     def write_reduce_result_list_to_file(self, w, input_filename, output_filename_base, reducer_id):
         try:
             temp_result_list = self.workers[w].get_result_list()
-            f = open(os.getcwd()+'/'+output_filename_base+'/'+output_filename_base + str(reducer_id)+'.txt', 'w')
+            f = open(os.getcwd()+'/'+self.data_dir+'/'+output_filename_base+'/'+output_filename_base + str(reducer_id)+'.txt', 'w')
             for e in temp_result_list:
                 f.write(str(e[0])+':'+str(e[1])+'\n')
             f.close()
@@ -92,8 +93,8 @@ class Master(object):
         for w in self.reduceState:
             if self.reduceState[w] == 'REDUCEDONE':
                 self.reduceState[w] = 'READY'
-        if not os.path.exists(os.getcwd()+'/' + output_filename_base):
-            os.makedirs(os.getcwd()+'/' + output_filename_base,0777)
+        if not os.path.exists(os.getcwd()+'/'+self.data_dir+'/' + output_filename_base):
+            os.makedirs(os.getcwd()+'/'+self.data_dir+'/' + output_filename_base,0777)
         chunks = self.split_file(input_filename, int(split_size))
         #Align map tasks to workers
         print 'MAP phase'
@@ -223,10 +224,10 @@ class Master(object):
         return selected_worker
 
     def split_file(self, filename, split_size):
-        fileSize = os.path.getsize(filename)
+        #fileSize = os.path.getsize(filename)
         #print(fileSize)
         chunks = []
-        with open(filename) as inputfile:
+        with open(os.getcwd()+'/'+self.data_dir+'/'+filename) as inputfile:
             current_size = 0
             offset = 0
             #outputfile = open('sub_inputfile_' + str(index) + '.txt', 'w')
@@ -259,11 +260,14 @@ class Master(object):
 
 
 if __name__ == '__main__':
-    port = 4242#sys.argv[1]
-    data_dir = "inputfile2.txt"#sys.argv[2]
-    master_addr = 'tcp://0.0.0.0:' + str(port)
-    s = zerorpc.Server(Master(data_dir))
-    s.bind(master_addr)
-    s.run()
+    port = sys.argv[1]
+    data_dir = sys.argv[2]
+    if not os.path.exists(os.getcwd()+'/'+data_dir):
+        print 'no such directory'
+    else:
+        master_addr = 'tcp://0.0.0.0:' + str(port)
+        s = zerorpc.Server(Master(data_dir))
+        s.bind(master_addr)
+        s.run()
     #m = Master(data_dir)
     #print m.split_file(data_dir, 18)

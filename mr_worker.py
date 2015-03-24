@@ -231,7 +231,7 @@ class Worker(object):
             end = reduce_id*each_size
 
         tp = 0
-        print begin, end
+        #print begin, end
         for e in sorted(self.map_table):
             if tp>=begin and tp < end:
                 table.append((e,self.map_table[e]))
@@ -247,9 +247,9 @@ class Worker(object):
         return list
 
 if __name__ == '__main__':
-    master_addr = "127.0.0.1:4242"#sys.argv[1];
     worker_ip = "127.0.0.1"
     worker_port = sys.argv[1]
+    master_addr = sys.argv[2];
     s = zerorpc.Server(Worker(master_addr,worker_ip,worker_port))
     s.bind('tcp://' + worker_ip+":"+worker_port)
     s.run()
