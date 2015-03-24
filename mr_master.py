@@ -73,7 +73,7 @@ class Master(object):
     def write_reduce_result_list_to_file(self, w, input_filename, output_filename_base, reducer_id):
         try:
             temp_result_list = self.workers[w].get_result_list()
-            f = open(output_filename_base + str(reducer_id)+'.txt', 'w')
+            f = open(os.getcwd()+'/'+output_filename_base+'/'+output_filename_base + str(reducer_id)+'.txt', 'w')
             for e in temp_result_list:
                 f.write(str(e[0])+':'+str(e[1])+'\n')
             f.close()
@@ -85,7 +85,13 @@ class Master(object):
         gevent.spawn(self.setJob_async, job_name, split_size, num_reducers, input_filename, output_filename_base)
 
     def setJob_async(self,job_name, split_size, num_reducers, input_filename, output_filename_base):
-        #split input file
+        self.reduce_id_list = {}
+        self.chunkState = {}
+        self.chunkWorker = {}
+        self.ready_chunks_mappers = {}
+        for w in self.reduceState:
+            if self.reduceState[w] == 'REDUCEDONE':
+                self.reduceState[w] = 'READY'
         if not os.path.exists(os.getcwd()+'/' + output_filename_base):
             os.makedirs(os.getcwd()+'/' + output_filename_base,0777)
         chunks = self.split_file(input_filename, int(split_size))
@@ -127,7 +133,12 @@ class Master(object):
             for w in self.reduceState:
                 if self.reduceState[w] == 'REDUCEDONE':
                     num_finished_reducer += 1
-            alldone = (num_finished_reducer >= num_reducers)
+            print num_finished_reducer, num_reducers
+            if num_finished_reducer >= int(num_reducers):
+                alldone = True
+            else:
+                alldone = False
+            print alldone
 
             for i in range(0,l):
                 w = self.chunkWorker[chunks[i]]
@@ -177,31 +188,7 @@ class Master(object):
 
         #Wait until all map tasks done
         print 'tasks done'
-        #while True:
-        #    mapDone = True
-        #    for w in self.workers:
-        #        if self.workers[w][0] != 'MAPDONE':
-        #            mapDone = False
-        #    if mapDone:
-        #        break
 
-        #Reduce
-        #print 'REDUCE phase'
-        #for w in self.workers:
-        #    proc = gevent.spawn(self.workers[w][1].do_reduce, job_name)
-        #    procs.append(proc)
-
-        #wait for reduce done
-        #print 'Wait until all reduce tasks done'
-        #while True:
-        #    reduceDone = True
-        #    for w in self.workers:
-        #        if self.workers[w][0] != 'REDUCEDONE':
-        #            reduceDone = False
-        #    if reduceDone:
-        #        break
-
-        #collect
     def send_mapper_list(self, w):
         try:
             print self.ready_chunks_mappers

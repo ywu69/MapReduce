@@ -44,7 +44,6 @@ class Worker(object):
 
         #Attributes of reducer
         self.mappers_list = {}
-        self.map_result = {}
         self.map_result_collect_state = {}
         self.reduce_id = 0
         self.result_list = {}
@@ -133,7 +132,6 @@ class Worker(object):
 
         # Sort intermediate keys
         self.map_table = mapper.get_table()
-        #self.map_table.keys().sort()
         self.num_reducers = num_reducers
         #print self.map_table
 
@@ -157,6 +155,9 @@ class Worker(object):
     def do_reduce_async(self, job_name, reduce_id, num_chunk):
         #wait until all map data collected
         print 'Doing REDUCE '+ job_name+' reduce id = '+str(reduce_id)
+        self.map_result_collect_state = {}
+        self.result_list = {}
+        self.result_sent_to_master = False
         self.reduce_id = reduce_id
         reducer = WordCountReduce()
 
@@ -227,7 +228,7 @@ class Worker(object):
 
         tp = 0
         print begin, end
-        for e in self.map_table:
+        for e in sorted(self.map_table):
             if tp>=begin and tp < end:
                 table.append((e,self.map_table[e]))
             tp += 1
@@ -237,7 +238,7 @@ class Worker(object):
 
     def get_result_list(self):
         list = []
-        for e in self.result_list:
+        for e in sorted(self.result_list):
             list.append((e,self.result_list[e]))
         return list
 
