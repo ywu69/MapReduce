@@ -101,8 +101,6 @@ class Master(object):
         print 'MAP phase'
         print chunks
         l = len(chunks)
-        procs = []
-
         for i in range(0,int(num_reducers)):
             self.reduce_id_list[i+1] = None
 
@@ -110,6 +108,12 @@ class Master(object):
             self.chunkState[chunks[x]] = 'CHUNK_NOTFINISH'
         while True:
             alldone = True
+            finished_reducer_id_list = []
+            for id in self.reduce_id_list:
+                if self.reduce_id_list[id] is None:
+                    continue
+                elif self.reduceState[self.reduce_id_list[id]] == 'REDUCEDONE':
+                    finished_reducer_id_list.append(id)
             #start mappers
             for i in range(0,l):
                 if self.chunkState[chunks[i]] != 'CHUNK_FINISH' and self.chunkState[chunks[i]] != 'CHUNK_MAPPING' and self.chunkState[chunks[i]] != 'CHUNK_WAIT_REDUCEDONE':
@@ -117,7 +121,7 @@ class Master(object):
                     self.chunkWorker[chunks[i]] = w
                     if w != None:
                         self.mapState[w] = 'MAPSTART'
-                        gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i], int(num_reducers))
+                        gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i], int(num_reducers), finished_reducer_id_list)
 
             #start reducers when map done
             #temp = int(num_reducers) - curr_num_reducers
@@ -150,6 +154,9 @@ class Master(object):
                     for e in self.reduce_id_list:
                         if self.reduce_id_list[e] == w:
                             self.reduce_id_list[e] = None
+                    for c in self.chunkState:
+                        if self.chunkState[c] == 'CHUNK_WAIT_REDUCEDONE':
+                            self.chunkState[c] = 'CHUNK_FAIL'
                 elif self.reduceState[w] == 'REDUCESTART':
                     #send map list to reducer
                     print 'send mapperlist to reducer'
@@ -158,12 +165,12 @@ class Master(object):
                     for id in self.reduce_id_list:
                         if self.reduce_id_list[id] == w:
                             gevent.spawn(self.write_reduce_result_list_to_file, w, input_filename, output_filename_base, id)
-                #elif self.reduceState[w] == 'REDUCEDONE':
-                #    pass
+                elif self.reduceState[w] == 'REDUCEDONE':
+                    pass
                     #self.chunkState[chunks[i]] = 'CHUNK_FINISH'
 
 
-            #print self.chunkState
+            print self.chunkState
             print 'ready_chunk_mappers:'
             print self.ready_chunks_mappers
             print 'reduceState:'

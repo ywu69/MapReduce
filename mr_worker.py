@@ -3,14 +3,22 @@ import zerorpc
 import sys
 import socket
 import gevent
-
+import hamming
 import mapreduce
 
 class HammingEncodeMap(mapreduce.Map):
     def map(self, k, v):
-        pass
+        hb =  hamming.HammingBinary()
+        for w in v:
+            self.table[k] = [hb.encode(w)]
+            k += 1
 
-class HammingEncodeReduce(mapreduce.Map):
+class HammingEncodeReduce(mapreduce.Reduce):
+    def reduce(self, k, vlist):
+        self.result_list[k] = vlist[0]
+
+class EncodeReduce(mapreduce.Reduce):
+
     def reduce(self, k, vlist):
         pass
 
@@ -40,7 +48,7 @@ class WordCountReduce(mapreduce.Reduce):
         #self.emit(k + ':' + str(count))
 
 class Worker(object):
-    def __init__(self, master_addr, worker_ip, worker_port):
+    def __init__(self, master_addr, worker_ip, worker_port, test_flag):
         self.master_addr = master_addr
         self.worker_port = worker_port
         self.worker_ip = worker_ip
@@ -61,6 +69,8 @@ class Worker(object):
         self.result_list = {}
         self.result_sent_to_master = False
 
+        self.test_flag = test_flag
+
     def controller(self):
         while True:
             print('[Worker]')
@@ -78,26 +88,31 @@ class Worker(object):
         print "reducer"+str(reduce_id)+ ' collected intermidiate data'
         self.reduce_state[reduce_id-1] = True
 
-    def do_map(self, job_name, input_filename, chunk, num_reducers):
-        gevent.spawn(self.do_map_async, job_name, input_filename, chunk, num_reducers)
+    def do_map(self, job_name, input_filename, chunk, num_reducers, finished_reducer_id_list):
+        gevent.spawn(self.do_map_async, job_name, input_filename, chunk, num_reducers, finished_reducer_id_list)
 
-    def do_map_async(self, job_name, input_filename, chunk, num_reducers):
-        print 'Doing MAP '+ job_name+','+input_filename
-        #self.map_table = {}
+    def do_map_async(self, job_name, input_filename, chunk, num_reducers, finished_reducer_id_list):
         self.reduce_state = []
-
+        print finished_reducer_id_list
         for i in range(0,num_reducers):
-            self.reduce_state.append(False)
+            if (i+1) in finished_reducer_id_list:
+                self.reduce_state.append(True)
+            else:
+                self.reduce_state.append(False)
 
         size = chunk[0]
         offset = chunk[1]
+        print 'Doing MAP. size = '+ str(size)+', ' + 'offset = '+str(offset)
         self.c.set_chunk_state(size, offset, 'CHUNK_MAPPING')
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPPING')
-        print 'size = '+ str(size)
-        print 'offset = ' + str(offset)
+        #print 'size = '+ str(size)
+        #print 'offset = ' + str(offset)
         #DO MAP TASK
         job_name_map = job_name+'MAP'
-        mapper = WordCountMap()
+        if job_name != 'wordcount':
+            mapper = HammingEncodeMap()
+        else:
+            mapper = WordCountMap()
         # Map phase
         with open(input_filename) as inputfile:
             curr_off = -1
@@ -122,11 +137,11 @@ class Worker(object):
                             if not w.endswith('\n'):
                                 newline += ' '
                     #print newline
-                    mapper.map(curr_off, newline)
+                    mapper.map(curr_off-len(newline), newline)
                     firstline_done = True
 
                 elif firstline_done and curr_off < offset+size:
-                    mapper.map(curr_off, line)
+                    mapper.map(curr_off - len(line), line)
                 elif curr_off >= offset+size:
                     curr_off -= len(line)
                     words = line.split(' ')
@@ -140,14 +155,14 @@ class Worker(object):
                                 newline += ' '
                         if curr_off >= offset+size:
                             break
-                    mapper.map(curr_off, newline)
+                    mapper.map(curr_off-len(newline), newline)
 
         # Sort intermediate keys
         self.map_table = mapper.get_table()
         self.num_reducers = num_reducers
         #print self.map_table
 
-
+        print 'MAP: wait reducers to collect map data'
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPRESULTCOLLECT')
         alldone = False
         while not alldone:
@@ -160,6 +175,7 @@ class Worker(object):
             continue
 
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPDONE')
+        print 'MAP: Done'
         #send to reducer
 
     def do_reduce(self, job_name, reduce_id, num_chunk):
@@ -172,26 +188,31 @@ class Worker(object):
         self.result_list = {}
         self.result_sent_to_master = False
         self.reduce_id = reduce_id
-        reducer = WordCountReduce()
+        if job_name != 'wordcount':
+            reducer = HammingEncodeReduce()
+        else:
+            reducer = WordCountReduce()
 
-        print 'PRESS CTRL+C'
-        gevent.sleep(3)
-        print 'get map datas'
-        print self.mappers_list
+        print 'REDUCE: get map datas'
+        #print self.mappers_list
         while len(self.map_result_collect_state) < num_chunk:
-            print len(self.map_result_collect_state), num_chunk
+            #print len(self.map_result_collect_state), num_chunk
             for e in self.mappers_list:
                 if not self.map_result_collect_state.has_key(e):
                     gevent.spawn(self.reduce_single_map_result, reducer, e, reduce_id)
             gevent.sleep(1)
+        if self.test_flag:
+            print 'PRESS CTRL+C'
+            gevent.sleep(3)
+
         self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCERESULTCOLLECT')
         #alldone = False
-        print 'Wait master to get'
+        print 'REDUCE: Wait master to get'
         self.result_list = reducer.get_result_list()
         while not self.result_sent_to_master:
             gevent.sleep(1)
             continue
-        print 'Done'
+        print 'REDUCE: Done'
         self.c.set_worker_reduce_state(self.worker_ip, self.worker_port, 'REDUCEDONE')
 
     def master_notice_received(self):
@@ -260,7 +281,10 @@ if __name__ == '__main__':
     worker_ip = socket.gethostbyname(socket.gethostname())
     worker_port = sys.argv[1]
     master_addr = sys.argv[2];
-    s = zerorpc.Server(Worker(master_addr,worker_ip,worker_port))
+    test_flag = False
+    if len(sys.argv) > 3:
+        test_flag = sys.argv[3]=="test"
+    s = zerorpc.Server(Worker(master_addr,worker_ip,worker_port,test_flag))
     s.bind('tcp://' + worker_ip+":"+worker_port)
     s.run()
 
