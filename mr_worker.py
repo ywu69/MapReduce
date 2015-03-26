@@ -6,6 +6,14 @@ import gevent
 
 import mapreduce
 
+class HammingEncodeMap(mapreduce.Map):
+    def map(self, k, v):
+        pass
+
+class HammingEncodeReduce(mapreduce.Map):
+    def reduce(self, k, vlist):
+        pass
+
 class WordCountMap(mapreduce.Map):
 
     def map(self, k, v):
@@ -55,7 +63,7 @@ class Worker(object):
 
     def controller(self):
         while True:
-            #print('[Worker]')
+            print('[Worker]')
             gevent.sleep(1)
 
     def ping(self):
@@ -114,11 +122,11 @@ class Worker(object):
                             if not w.endswith('\n'):
                                 newline += ' '
                     #print newline
-                    mapper.map(0, newline)
+                    mapper.map(curr_off, newline)
                     firstline_done = True
 
                 elif firstline_done and curr_off < offset+size:
-                    mapper.map(0, line)
+                    mapper.map(curr_off, line)
                 elif curr_off >= offset+size:
                     curr_off -= len(line)
                     words = line.split(' ')
@@ -132,7 +140,7 @@ class Worker(object):
                                 newline += ' '
                         if curr_off >= offset+size:
                             break
-                    mapper.map(0, newline)
+                    mapper.map(curr_off, newline)
 
         # Sort intermediate keys
         self.map_table = mapper.get_table()
@@ -247,7 +255,7 @@ class Worker(object):
         return list
 
 if __name__ == '__main__':
-    worker_ip = "127.0.0.1"
+    worker_ip = socket.gethostbyname(socket.gethostname())
     worker_port = sys.argv[1]
     master_addr = sys.argv[2];
     s = zerorpc.Server(Worker(master_addr,worker_ip,worker_port))

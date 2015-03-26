@@ -4,6 +4,7 @@ import sys
 import zerorpc
 import os
 import gevent
+import socket
 from gevent import timeout
 
 class Master(object):
@@ -111,7 +112,7 @@ class Master(object):
             alldone = True
             #start mappers
             for i in range(0,l):
-                if self.chunkState[chunks[i]] != 'CHUNK_FINISH' and self.chunkState[chunks[i]] != 'CHUNK_MAPPING':
+                if self.chunkState[chunks[i]] != 'CHUNK_FINISH' and self.chunkState[chunks[i]] != 'CHUNK_MAPPING' and self.chunkState[chunks[i]] != 'CHUNK_WAIT_REDUCEDONE':
                     w = self.select_a_mapper()
                     if w != None:
                         self.chunkWorker[chunks[i]] = w
@@ -129,18 +130,6 @@ class Master(object):
                         self.reduceState[w] = 'REDUCESTART'
                         gevent.spawn(self.workers[w].do_reduce, job_name, reduce_id, l)
 
-            #judge if task is over
-            num_finished_reducer = 0
-            for w in self.reduceState:
-                if self.reduceState[w] == 'REDUCEDONE':
-                    num_finished_reducer += 1
-            print num_finished_reducer, num_reducers
-            if num_finished_reducer >= int(num_reducers):
-                alldone = True
-            else:
-                alldone = False
-            print alldone
-
             for i in range(0,l):
                 w = self.chunkWorker[chunks[i]]
                 if self.mapState[w] == 'LOSS':
@@ -150,7 +139,7 @@ class Master(object):
                 elif self.mapState[w] == 'MAPRESULTCOLLECT':
                     self.ready_chunks_mappers[chunks[i]] = w
                 elif self.mapState[w] == 'MAPDONE':
-                    self.chunkState[chunks[i]] = 'CHUNK_FINISH'
+                    self.chunkState[chunks[i]] = 'CHUNK_WAIT_REDUCEDONE'
                     if self.ready_chunks_mappers.has_key(chunks[i]):
                         self.ready_chunks_mappers.pop(chunks[i])
                     self.mapState[w] = 'READY'
@@ -167,7 +156,9 @@ class Master(object):
                     for id in self.reduce_id_list:
                         if self.reduce_id_list[id] == w:
                             gevent.spawn(self.write_reduce_result_list_to_file, w, input_filename, output_filename_base, id)
-
+                elif self.reduceState[w] == 'REDUCEDONE':
+                    pass
+                    #self.chunkState[chunks[i]] = 'CHUNK_FINISH'
 
 
             #print self.chunkState
@@ -176,6 +167,18 @@ class Master(object):
             print 'reduceState:'
             print self.reduceState
             gevent.sleep(1)
+
+            #judge if task is over
+            num_finished_reducer = 0
+            for w in self.reduceState:
+                if self.reduceState[w] == 'REDUCEDONE':
+                    num_finished_reducer += 1
+            print num_finished_reducer, num_reducers
+            if num_finished_reducer >= int(num_reducers):
+                alldone = True
+            else:
+                alldone = False
+            print alldone
             if alldone:
                 break
 
@@ -269,5 +272,6 @@ if __name__ == '__main__':
         s = zerorpc.Server(Master(data_dir))
         s.bind(master_addr)
         s.run()
-    #m = Master(data_dir)
-    #print m.split_file(data_dir, 18)
+    #m = Master('/')
+    #print m.split_file('inputfile3.txt', 16)
+    #print socket.gethostbyname(socket.gethostname())
