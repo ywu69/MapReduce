@@ -114,8 +114,8 @@ class Master(object):
             for i in range(0,l):
                 if self.chunkState[chunks[i]] != 'CHUNK_FINISH' and self.chunkState[chunks[i]] != 'CHUNK_MAPPING' and self.chunkState[chunks[i]] != 'CHUNK_WAIT_REDUCEDONE':
                     w = self.select_a_mapper()
+                    self.chunkWorker[chunks[i]] = w
                     if w != None:
-                        self.chunkWorker[chunks[i]] = w
                         self.mapState[w] = 'MAPSTART'
                         gevent.spawn(self.workers[w].do_map, job_name, input_filename, chunks[i], int(num_reducers))
 
@@ -132,6 +132,8 @@ class Master(object):
 
             for i in range(0,l):
                 w = self.chunkWorker[chunks[i]]
+                if w is None:
+                    continue
                 if self.mapState[w] == 'LOSS':
                     self.chunkState[chunks[i]] = 'CHUNK_FAIL'
                     if self.ready_chunks_mappers.has_key(chunks[i]):
@@ -156,8 +158,8 @@ class Master(object):
                     for id in self.reduce_id_list:
                         if self.reduce_id_list[id] == w:
                             gevent.spawn(self.write_reduce_result_list_to_file, w, input_filename, output_filename_base, id)
-                elif self.reduceState[w] == 'REDUCEDONE':
-                    pass
+                #elif self.reduceState[w] == 'REDUCEDONE':
+                #    pass
                     #self.chunkState[chunks[i]] = 'CHUNK_FINISH'
 
 

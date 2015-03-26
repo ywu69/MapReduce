@@ -75,7 +75,7 @@ class Worker(object):
         gevent.spawn(self.notice_received_async, reduce_id)
     def notice_received_async(self,reduce_id):
         #print self.reduce_state
-        #print reduce_id
+        print "reducer"+str(reduce_id)+ ' collected intermidiate data'
         self.reduce_state[reduce_id-1] = True
 
     def do_map(self, job_name, input_filename, chunk, num_reducers):
@@ -156,6 +156,7 @@ class Worker(object):
                 if i == False:
                     alldone = False
             gevent.sleep(1)
+            print self.reduce_state
             continue
 
         self.c.set_worker_map_state(self.worker_ip, self.worker_port, 'MAPDONE')
@@ -176,6 +177,7 @@ class Worker(object):
         print 'PRESS CTRL+C'
         gevent.sleep(3)
         print 'get map datas'
+        print self.mappers_list
         while len(self.map_result_collect_state) < num_chunk:
             print len(self.map_result_collect_state), num_chunk
             for e in self.mappers_list:
